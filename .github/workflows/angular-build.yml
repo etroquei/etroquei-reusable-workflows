@@ -1,0 +1,78 @@
+name: "Build Angular Workflow"
+
+on:
+  workflow_call:
+    inputs:
+      node-version:
+        required: false
+        type: string
+        default: '18.x'
+      fetch-depth:
+        required: false
+        type: number
+        default: 1
+        description: 'Use 0 for full history (required for semantic-release), 1 for faster checkout'
+      build-command:
+        required: true
+        type: string
+        description: 'Build command to run (e.g., build:dev, build:prod)'
+      artifact-name:
+        required: false
+        type: string
+        default: 'build-artifact'
+        description: 'Name of the artifact to upload'
+      artifact-path:
+        required: true
+        type: string
+        description: 'Path to the build output directory'
+      use-cache:
+        required: false
+        type: boolean
+        default: true
+        description: 'Whether to use cache for node_modules'
+    outputs:
+      job-status:
+        description: "Status of the build job"
+        value: ${{ jobs.build.outputs.status }}
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    outputs:
+      status: ${{ steps.status.outputs.status }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: ${{ inputs.fetch-depth }}
+
+      - name: Prepare cache
+        if: ${{ inputs.use-cache }}
+        uses: actions/cache@v4
+        with:
+          path: ./node_modules
+          key: ${{ runner.os }}-node-${{ hashFiles('**/package-lock.json') }}
+          restore-keys: |
+            ${{ runner.os }}-node-
+
+      - name: Setup Node.js ${{ inputs.node-version }}
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ inputs.node-version }}
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build app
+        run: npm run ${{ inputs.build-command }}
+
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ inputs.artifact-name }}
+          path: ${{ inputs.artifact-path }}
+
+      - name: Set job status
+        id: status
+        run: echo "status=success" >> $GITHUB_OUTPUT

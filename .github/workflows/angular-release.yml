@@ -1,0 +1,119 @@
+name: "Create Release Workflow"
+
+on:
+  workflow_call:
+    inputs:
+      node-version:
+        required: false
+        type: string
+        default: '18.x'
+      source-branch:
+        required: false
+        type: string
+        default: 'develop'
+        description: 'Source branch for creating the release'
+      target-branch:
+        required: false
+        type: string
+        default: 'main'
+        description: 'Target branch for the pull request'
+      use-cache:
+        required: false
+        type: boolean
+        default: true
+        description: 'Whether to use cache for node_modules'
+      pr-title-prefix:
+        required: false
+        type: string
+        default: 'PR criado automaticamente.'
+        description: 'Prefix for the PR title'
+      pr-labels:
+        required: false
+        type: string
+        default: 'automated,pre-release'
+        description: 'Labels for the PR'
+    outputs:
+      version:
+        description: "The semantic version generated"
+        value: ${{ jobs.create-pre-release.outputs.version }}
+    secrets:
+      github-token:
+        required: true
+
+jobs:
+  create-pre-release:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.semantic.outputs.version }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # Full history needed for semantic-release
+          ref: ${{ inputs.source-branch }}
+
+      - name: Prepare cache
+        if: ${{ inputs.use-cache }}
+        uses: actions/cache@v4
+        with:
+          path: ./node_modules
+          key: ${{ runner.os }}-node-${{ hashFiles('**/package-lock.json') }}
+          restore-keys: |
+            ${{ runner.os }}-node-
+
+      - name: Setup Node.js ${{ inputs.node-version }}
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ inputs.node-version }}
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Get version
+        id: semantic
+        run: |
+          OUTPUT=$(unset GITHUB_ACTIONS && npx semantic-release)
+          git fetch --tags
+          VERSION=$(git describe --tags `git rev-list --tags --max-count=1`)
+          VERSION=${VERSION//v/}
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+
+      - name: Create Release Branch
+        run: |
+          BRANCH_EXISTS=$(git ls-remote --heads origin release/v${{ steps.semantic.outputs.version }})
+          if [ -n "$BRANCH_EXISTS" ]; then
+            echo "Branch já existe!"
+          else
+            echo "Branch não existe, criando..."
+            git checkout -b release/v${{ steps.semantic.outputs.version }}
+            git push origin release/v${{ steps.semantic.outputs.version }}
+          fi
+
+  open-pr:
+    needs: create-pre-release
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      issues: write
+      pull-requests: write
+    env:
+      GITHUB_TOKEN: ${{ secrets.github-token }}
+      RELEASE_BRANCH: release/v${{ needs.create-pre-release.outputs.version }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Create Pull Request
+        uses: devops-infra/action-pull-request@v0.5.5
+        with:
+          github_token: ${{ secrets.github-token }}
+          source_branch: '${{ env.RELEASE_BRANCH }}'
+          target_branch: ${{ inputs.target-branch }}
+          title: '${{ inputs.pr-title-prefix }} ${{ inputs.target-branch }} <- ${{ env.RELEASE_BRANCH }}'
+          body: "**Automated Pull Request by GitHub Actions**"
+          label: ${{ inputs.pr-labels }}
+          get_diff: true
+          template: .github/PULL_REQUEST_TEMPLATE.md

@@ -1,0 +1,53 @@
+name: "Deploy to AWS S3 Workflow"
+
+on:
+  workflow_call:
+    inputs:
+      environment:
+        required: true
+        type: string
+        description: 'Environment to deploy to (e.g., DEV, PROD)'
+      artifact-name:
+        required: false
+        type: string
+        default: 'build-artifact'
+        description: 'Name of the artifact to download'
+      artifact-path:
+        required: true
+        type: string
+        description: 'Path where to download the artifact'
+      s3-bucket:
+        required: true
+        type: string
+        description: 'S3 bucket name to deploy to'
+      aws-region:
+        required: false
+        type: string
+        default: 'sa-east-1'
+        description: 'AWS region'
+    secrets:
+      aws-access-key-id:
+        required: true
+      aws-secret-access-key:
+        required: true
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.environment }}
+    steps:
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.aws-access-key-id }}
+          aws-secret-access-key: ${{ secrets.aws-secret-access-key }}
+          aws-region: ${{ inputs.aws-region }}
+
+      - name: Download build artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: ${{ inputs.artifact-name }}
+          path: ${{ inputs.artifact-path }}
+
+      - name: Deploy to S3
+        run: aws s3 sync ${{ inputs.artifact-path }} s3://${{ inputs.s3-bucket }}

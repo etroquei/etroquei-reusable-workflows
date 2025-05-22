@@ -1,0 +1,52 @@
+name: "Open Pull Request Workflow"
+
+on:
+  workflow_call:
+    inputs:
+      fetch-depth:
+        required: false
+        type: number
+        default: 0
+        description: 'Depth of git fetch'
+      target-branch:
+        required: false
+        type: string
+        default: 'develop'
+        description: 'Target branch for the pull request'
+      pr-title-prefix:
+        required: false
+        type: string
+        default: 'PR criado automaticamente.'
+        description: 'Prefix for the PR title'
+      pr-labels:
+        required: false
+        type: string
+        default: 'automated,feature'
+        description: 'Labels for the PR'
+    secrets:
+      github-token:
+        required: true
+
+jobs:
+  open-pr:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: ${{ inputs.fetch-depth }}
+
+      - name: Extract branch name
+        run: echo "BRANCH_NAME=$(echo ${GITHUB_REF#refs/heads/})" >> $GITHUB_ENV
+
+      - name: Create Pull Request
+        if: startsWith(github.ref, 'refs/heads/feature') || startsWith(github.ref, 'refs/heads/bugfix') || startsWith(github.ref, 'refs/heads/hotfix')
+        uses: devops-infra/action-pull-request@v0.5.5
+        with:
+          github_token: ${{ secrets.github-token }}
+          target_branch: ${{ inputs.target-branch }}
+          title: '${{ inputs.pr-title-prefix }} ${{ inputs.target-branch }} <- ${{ env.BRANCH_NAME }}'
+          body: "**Automated Pull Request by GitHub Actions**"
+          label: ${{ inputs.pr-labels }}
+          get_diff: true
+          template: .github/PULL_REQUEST_TEMPLATE.md

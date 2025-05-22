@@ -1,0 +1,52 @@
+name: "CI Angular Workflow"
+
+on:
+  workflow_call:
+    inputs:
+      node-version:
+        required: false
+        type: string
+        default: '18.x'
+      fetch-depth:
+        required: false
+        type: number
+        default: 1
+        description: 'Use 0 for full history (required for semantic-release), 1 for faster checkout'
+      use-cache:
+        required: false
+        type: boolean
+        default: true
+        description: 'Whether to use cache for node_modules'
+
+jobs:
+  ci-angular:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: ${{ inputs.fetch-depth }}
+
+      - name: Prepare cache
+        if: ${{ inputs.use-cache }}
+        uses: actions/cache@v4
+        with:
+          path: ./node_modules
+          key: ${{ runner.os }}-node-${{ hashFiles('**/package-lock.json') }}
+          restore-keys: |
+            ${{ runner.os }}-node-
+
+      - name: Use Node.js ${{ inputs.node-version }}
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ inputs.node-version }}
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run linter
+        run: npm run lint
+
+      - name: Run tests
+        run: npm run test
