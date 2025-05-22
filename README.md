@@ -21,7 +21,7 @@ Para utilizar os workflows deste repositório, importe-os no seu projeto GitHub 
 ```yaml
 jobs:
   ci:
-    uses: etroquei/github-workflows/.github/workflows/ci-workflow.yml@main # ou @v1.0.0
+    uses: etroquei/etroquei-reusable-workflows/.github/workflows/angular-ci.yml@main # ou @v1.0.0
     with:
       node-version: '18.x'
       fetch-depth: 1
@@ -31,13 +31,15 @@ jobs:
 ## Estrutura
 
 ```bash
-.github/
-└── workflows/
-    ├── ci-workflow.yml
-    ├── build-workflow.yml
-    ├── deploy-workflow.yml
-    ├── open-pr-workflow.yml
-    └── release-workflow.yml
+etroquei-reusable-workflows/
+├── .github/
+│   └── workflows/
+│       ├── angular-build.yml
+│       ├── angular-ci.yml
+│       ├── angular-deploy.yml
+│       ├── angular-create-pull-request.yml
+│       └── angular-create-release.yml
+└── README.md
 ```
 
 ## Contribuindo
