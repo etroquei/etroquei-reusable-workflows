@@ -127,7 +127,7 @@ jobs:
       - name: "Fazer merge do PR de reversão"
         id: merge
         env:
-          GH_TOKEN: ${{ secrets.GH_TOKEN }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           PR_NUMBER: ${{ needs.criar_pr.outputs.pr_number }}
         run: |
           # Usar a CLI para fazer o merge e deletar a branch
