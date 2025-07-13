@@ -12,10 +12,10 @@ on:
         required: false
         type: string
         default: 'main'
-    secrets:
-      GITHUB_TOKEN:
-        description: 'GITHUB_TOKEN com permissões necessárias.'
-        required: true
+    # secrets:
+    #   GITHUB_TOKEN:
+    #     description: 'GITHUB_TOKEN com permissões necessárias.'
+    #     required: true
 
 jobs:
   # ETAPA 1: INICIAR E NOTIFICAR
