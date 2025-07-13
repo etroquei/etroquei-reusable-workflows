@@ -1,134 +1,163 @@
-﻿# Nome do workflow reutilizável para identificação
-name: "Logica Central de Rollback"
+﻿name: "Lógica Central de Rollback"
 
-# A "mágica" que torna este workflow chamável por outros
 on:
   workflow_call:
-    # --- INPUTS: Parâmetros que este workflow espera receber ---
-    # Precisamos saber em qual issue comentar. O workflow chamador nos enviará essa informação.
     inputs:
       issue_number:
-        description: 'O número da Issue que acionou o processo de rollback.'
+        description: 'O número da Issue que acionou o processo.'
         required: true
         type: string
-      
-      # Adicionamos a branch como um parâmetro para maior flexibilidade.
-      # O padrão é 'main', mas um projeto pode querer reverter em 'develop', por exemplo.
       target_branch:
         description: 'A branch alvo para o rollback.'
         required: false
         type: string
         default: 'main'
-
-    # --- SECRETS: Segredos que este workflow precisa ---
-    # Precisamos de um token para interagir com a API do GitHub (ler PRs, comentar na issue).
-    # O 'inherit' não é usado aqui, mas no chamador. Aqui apenas declaramos a necessidade.
     secrets:
       GH_TOKEN:
-        description: 'Um GITHUB_TOKEN com permissões para ler PRs e escrever em Issues.'
+        description: 'GITHUB_TOKEN com permissões necessárias.'
         required: true
 
-# --- JOBS: As tarefas que o workflow executará ---
 jobs:
-  prepare-rollback:
-    name: "Preparar reversão"
+  # ETAPA 1: INICIAR E NOTIFICAR
+  iniciar:
+    name: "1. Iniciar e Notificar"
     runs-on: ubuntu-latest
-
-    # Permissões necessárias para este job específico.
-    # Mesmo que o chamador passe as permissões, é uma boa prática declará-las aqui.
     permissions:
-      pull-requests: read   # Para ler a lista de Pull Requests
-      issues: write         # Para postar o comentário na Issue
-
+      issues: write
     steps:
-      - name: "1. Validar Inputs"
-        run: |
-          echo "Iniciando processo de rollback para a Issue #${{ inputs.issue_number }} na branch '${{ inputs.target_branch }}'."
-          if [ -z "${{ inputs.issue_number }}" ]; then
-            echo "Erro: O número da Issue (issue_number) não foi fornecido."
-            exit 1
-          fi
-
-      - name: "2. Obter informações do último PR mergeado"
-        id: last_pr
-        # Usamos o token passado pelo workflow chamador
-        env:
-          GH_TOKEN: ${{ secrets.GH_TOKEN }}
-          TARGET_BRANCH: ${{ inputs.target_branch }}
-        run: |
-          # Usamos a GitHub CLI para buscar o último PR mergeado na branch alvo
-          PR_DATA=$(gh pr list --base "$TARGET_BRANCH" --state merged --limit 1 --json number,url,title)
-          
-          # Verificamos se a busca retornou algum resultado
-          if [ -z "$PR_DATA" ] || [ "$PR_DATA" == "[]" ]; then
-            echo "::error::Nenhum Pull Request mergeado foi encontrado na branch '$TARGET_BRANCH'."
-            # Criamos uma variável de saída para o próximo passo saber do erro
-            echo "pr_found=false" >> $GITHUB_OUTPUT
-            exit 0 # Saímos com sucesso para permitir que o próximo passo comente o erro na issue
-          fi
-
-          # Extraímos os dados do JSON usando jq
-          PR_NUMBER=$(echo "$PR_DATA" | jq -r '.[0].number')
-          PR_URL=$(echo "$PR_DATA" | jq -r '.[0].url')
-          PR_TITLE=$(echo "$PR_DATA" | jq -r '.[0].title')
-
-          # Geramos a URL de reversão, que é o segredo deste fluxo
-          REVERT_URL="${PR_URL}/revert"
-
-          # Passamos as informações para os próximos passos via outputs
-          echo "pr_found=true" >> $GITHUB_OUTPUT
-          echo "pr_number=$PR_NUMBER" >> $GITHUB_OUTPUT
-          echo "pr_title=$PR_TITLE" >> $GITHUB_OUTPUT
-          echo "revert_url=$REVERT_URL" >> $GITHUB_OUTPUT
-
-      - name: "3. Construir e Postar Comentário na Issue"
+      - name: "Comentar na Issue sobre o início do processo"
         uses: actions/github-script@v7
         with:
           github-token: ${{ secrets.GH_TOKEN }}
           script: |
             const issue_number = ${{ inputs.issue_number }};
-            const pr_found = "${{ steps.last_pr.outputs.pr_found }}" === "true";
+            const run_url = `https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}`;
+            
+            const comment_body = `
+            ⏳ **Processo de Rollback Iniciado...**
 
-            let comment_body;
+            A automação foi acionada. Você pode acompanhar o progresso em tempo real no seguinte link:
+            👉 **[Verificar Log da Action](${run_url} )**
+            `;
 
-            if (pr_found) {
-              // Se o PR foi encontrado, montamos a mensagem de sucesso
-              const pr_number = "${{ steps.last_pr.outputs.pr_number }}";
-              const pr_title = "${{ steps.last_pr.outputs.pr_title }}";
-              const revert_url = "${{ steps.last_pr.outputs.revert_url }}";
-              const target_branch = "${{ inputs.target_branch }}";
-
-              comment_body = `
-              ✅ **Ação de Rollback Pronta!**
-
-              O último Pull Request mergeado na branch \`${target_branch}\` foi o **[#${pr_number}: ${pr_title}](${revert_url})**.
-
-              Para iniciar a reversão, clique no botão abaixo. Isso abrirá a página do GitHub para você criar o Pull Request de reversão.
-
-              👉 ### **[Clique aqui para Reverter o PR #${pr_number}](${revert_url})**
-
-              *Após clicar, revise as alterações e confirme a criação do PR de rollback.*
-              `;
-            } else {
-              // Se nenhum PR foi encontrado, montamos uma mensagem de erro clara
-              const target_branch = "${{ inputs.target_branch }}";
-              comment_body = `
-              ⚠️ **Atenção: Não foi possível encontrar o último PR!**
-
-              A automação não encontrou nenhum Pull Request recentemente mergeado na branch \`${target_branch}\`.
-
-              **Possíveis causas:**
-              - A branch pode ter um nome diferente.
-              - Nenhum PR foi mergeado ainda nesta branch.
-
-              Por favor, verifique a branch e, se necessário, realize o processo de reversão manualmente.
-              `;
-            }
-
-            // Posta o comentário na issue que originou o evento
             await github.rest.issues.createComment({
               owner: context.repo.owner,
               repo: context.repo.repo,
               issue_number: issue_number,
               body: comment_body
+            });
+
+  # ETAPA 2: PREPARAR A REVERSÃO (Depende da Etapa 1)
+  preparar:
+    name: "2. Preparar Reversão"
+    runs-on: ubuntu-latest
+    needs: iniciar # Garante que esta etapa só rode após a 'iniciar'
+    permissions:
+      pull-requests: read
+    # Passamos os resultados deste job para os próximos
+    outputs:
+      pr_found: ${{ steps.find_pr.outputs.pr_found }}
+      pr_number: ${{ steps.find_pr.outputs.pr_number }}
+      pr_title: ${{ steps.find_pr.outputs.pr_title }}
+      revert_url: ${{ steps.find_pr.outputs.revert_url }}
+    steps:
+      - name: "Encontrar último PR mergeado"
+        id: find_pr
+        env:
+          GH_TOKEN: ${{ secrets.GH_TOKEN }}
+          TARGET_BRANCH: ${{ inputs.target_branch }}
+        run: |
+          PR_DATA=$(gh pr list --base "$TARGET_BRANCH" --state merged --limit 1 --json number,url,title)
+          if [ -z "$PR_DATA" ] || [ "$PR_DATA" == "[]" ]; then
+            echo "pr_found=false" >> $GITHUB_OUTPUT
+          else
+            echo "pr_found=true" >> $GITHUB_OUTPUT
+            echo "pr_number=$(echo "$PR_DATA" | jq -r '.[0].number')" >> $GITHUB_OUTPUT
+            echo "pr_title=$(echo "$PR_DATA" | jq -r '.[0].title')" >> $GITHUB_OUTPUT
+            echo "revert_url=$(echo "$PR_DATA" | jq -r '.[0].url')/revert" >> $GITHUB_OUTPUT
+          fi
+
+  # ETAPA 3: NOTIFICAR SOBRE A REVERSÃO (Depende da Etapa 2)
+  notificar_reversao:
+    name: "3. Notificar Reversão Pronta"
+    runs-on: ubuntu-latest
+    needs: preparar # Garante que esta etapa só rode após a 'preparar'
+    # Só executa se um PR foi encontrado na etapa anterior
+    if: needs.preparar.outputs.pr_found == 'true'
+    permissions:
+      issues: write
+    steps:
+      - name: "Comentar na Issue com o link de reversão"
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.GH_TOKEN }}
+          script: |
+            const issue_number = ${{ inputs.issue_number }};
+            const pr_number = "${{ needs.preparar.outputs.pr_number }}";
+            const pr_title = "${{ needs.preparar.outputs.pr_title }}";
+            const revert_url = "${{ needs.preparar.outputs.revert_url }}";
+            const target_branch = "${{ inputs.target_branch }}";
+
+            const comment_body = `
+            ✅ **Reversão Pronta para Confirmação!**
+
+            O último Pull Request mergeado na branch \`${target_branch}\` foi o **[#${pr_number}: ${pr_title}](${revert_url})**.
+
+            Para finalizar, um membro da equipe deve clicar no link abaixo para criar o Pull Request de reversão.
+
+            👉 ### **[Clique aqui para Criar o PR de Reversão](${revert_url})**
+            `;
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: issue_number,
+              body: comment_body
+            });
+
+  # ETAPA 4: FINALIZAR E NOTIFICAR O STATUS FINAL (Depende das etapas anteriores)
+  finalizar:
+    name: "4. Finalizar Processo"
+    runs-on: ubuntu-latest
+    # 'always()' garante que este job sempre rode, mesmo que um dos anteriores falhe ou seja pulado
+    if: always() 
+    needs: [iniciar, preparar, notificar_reversao]
+    permissions:
+      issues: write
+    steps:
+      - name: "Verificar status e comentar na Issue"
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.GH_TOKEN }}
+          script: |
+            const issue_number = ${{ inputs.issue_number }};
+            const preparacao_status = "${{ needs.preparar.result }}";
+            const notificacao_status = "${{ needs.notificar_reversao.result }}";
+
+            let final_comment;
+
+            if (preparacao_status === 'failure') {
+              final_comment = `
+              ❌ **Processo de Rollback Falhou!**
+
+              Ocorreu um erro inesperado durante a etapa de preparação. Por favor, verifique os [logs da Action](${github.server_url}/${{ github.repository }}/actions/runs/${{ github.run_id }}) para mais detalhes.
+              `;
+            } else if (notificacao_status === 'skipped') {
+              final_comment = `
+              ⚠️ **Processo Concluído com Aviso.**
+
+              A automação não encontrou um Pull Request para reverter na branch \`${{ inputs.target_branch }}\`. Nenhuma ação foi tomada.
+              `;
+            } else {
+              final_comment = `
+              🏁 **Processo Finalizado.**
+
+              A automação concluiu a análise. O link para a criação do PR de reversão foi postado acima.
+              `;
+            }
+
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: issue_number,
+              body: final_comment
             });
