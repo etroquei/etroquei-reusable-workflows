@@ -55,13 +55,11 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TARGET_BRANCH: ${{ inputs.target_branch }}
         run: |
-          # Configurar o Git com o nome e email do bot da action
           git config user.name "GitHub Actions Bot"
           git config user.email "actions-bot@github.com"
 
-          # 1. Encontrar o SHA do commit de merge do último PR
-          MERGE_COMMIT_SHA=$(gh pr list --base "$TARGET_BRANCH" --state merged --limit 1 --json mergeCommit --jq '.[0].mergeCommit.oid')
           LAST_PR_NUMBER=$(gh pr list --base "$TARGET_BRANCH" --state merged --limit 1 --json number --jq '.[0].number')
+          MERGE_COMMIT_SHA=$(gh pr list --base "$TARGET_BRANCH" --state merged --limit 1 --json mergeCommit --jq '.[0].mergeCommit.oid')
 
           if [ -z "$MERGE_COMMIT_SHA" ] || [ "$MERGE_COMMIT_SHA" == "null" ]; then
             echo "::error::Nenhum commit de merge encontrado para o último PR."
@@ -71,22 +69,26 @@ jobs:
           echo "Último PR encontrado: #${LAST_PR_NUMBER}"
           echo "Commit de merge a ser revertido: ${MERGE_COMMIT_SHA}"
 
-          # 2. Criar uma nova branch para a reversão
           REVERT_BRANCH_NAME="revert-pr-${LAST_PR_NUMBER}"
+
+          # AQUI ESTÁ A CORREÇÃO!
+          # 1. Deleta a branch remota se ela existir de uma execução anterior.
+          # O '|| true' garante que o script não falhe se a branch não existir.
+          git push origin --delete "$REVERT_BRANCH_NAME" || true
+
+          # 2. Cria a nova branch localmente
           git checkout -b "$REVERT_BRANCH_NAME"
 
-          # 3. Usar git revert para criar o commit de reversão
-          # A opção -m 1 é crucial para reverter um commit de merge,
-          # pois indica que queremos manter o lado do "pai 1" (a branch principal).
+          # 3. Reverte o commit
           git revert --no-commit -m 1 "$MERGE_COMMIT_SHA"
 
-          # 4. Fazer o commit da reversão
+          # 4. Faz o commit da reversão
           git commit -m "Revert: Reversão automática do PR #${LAST_PR_NUMBER}" -m "Este commit reverte as alterações do PR #${LAST_PR_NUMBER}."
 
-          # 5. Fazer push da nova branch para o repositório remoto
+          # 5. Faz o push da nova branch limpa
           git push origin "$REVERT_BRANCH_NAME"
 
-          # 6. Passar o nome da branch para o próximo passo
+          # 6. Passa os outputs
           echo "revert_branch_name=${REVERT_BRANCH_NAME}" >> $GITHUB_OUTPUT
           echo "last_pr_number=${LAST_PR_NUMBER}" >> $GITHUB_OUTPUT
 
