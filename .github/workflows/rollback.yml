@@ -124,6 +124,8 @@ jobs:
     outputs:
       merge_commit_sha: ${{ steps.merge.outputs.sha }}
     steps:
+      - name: "Fazer checkout do código"
+        uses: actions/checkout@v4
       - name: "Fazer merge do PR de reversão"
         id: merge
         env:
