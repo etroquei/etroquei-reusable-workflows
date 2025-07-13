@@ -20,7 +20,7 @@ on:
 jobs:
   # ETAPA 1: INICIAR E NOTIFICAR
   iniciar:
-    name: "1. Iniciar e Notificar"
+    name: "1. Iniciar e notificar"
     runs-on: ubuntu-latest
     permissions:
       issues: write
@@ -34,7 +34,7 @@ jobs:
             const run_url = `https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}`;
             
             const comment_body = `
-            ⏳ **Processo de Rollback Iniciado...**
+            ⏳ **Processo de Rollback iniciado...**
 
             A automação foi acionada. Você pode acompanhar o progresso em tempo real no seguinte link:
             👉 **[Verificar Log da Action](${run_url} )**
@@ -49,7 +49,7 @@ jobs:
 
   # ETAPA 2: PREPARAR A REVERSÃO (Depende da Etapa 1)
   preparar:
-    name: "2. Preparar Reversão"
+    name: "2. Preparar Rollback"
     runs-on: ubuntu-latest
     needs: iniciar # Garante que esta etapa só rode após a 'iniciar'
     permissions:
@@ -79,7 +79,7 @@ jobs:
 
   # ETAPA 3: NOTIFICAR SOBRE A REVERSÃO (Depende da Etapa 2)
   notificar_reversao:
-    name: "3. Notificar Reversão Pronta"
+    name: "3. Notificar Rollback pronto"
     runs-on: ubuntu-latest
     needs: preparar # Garante que esta etapa só rode após a 'preparar'
     # Só executa se um PR foi encontrado na etapa anterior
@@ -87,7 +87,7 @@ jobs:
     permissions:
       issues: write
     steps:
-      - name: "Comentar na Issue com o link de reversão"
+      - name: "Comentar na Issue com o link da Action"
         uses: actions/github-script@v7
         with:
           github-token: ${{ secrets.GH_TOKEN }}
@@ -99,13 +99,13 @@ jobs:
             const target_branch = "${{ inputs.target_branch }}";
 
             const comment_body = `
-            ✅ **Reversão Pronta para Confirmação!**
+            ✅ **Rollback pronto para confirmação!**
 
             O último Pull Request mergeado na branch \`${target_branch}\` foi o **[#${pr_number}: ${pr_title}](${revert_url})**.
 
-            Para finalizar, um membro da equipe deve clicar no link abaixo para criar o Pull Request de reversão.
+            Para finalizar, um membro da equipe deve clicar no link abaixo para criar o Pull Request de Rollback.
 
-            👉 ### **[Clique aqui para Criar o PR de Reversão](${revert_url})**
+            👉 ### **[Clique aqui para Criar o PR de Rollback](${revert_url})**
             `;
             await github.rest.issues.createComment({
               owner: context.repo.owner,
@@ -116,7 +116,7 @@ jobs:
 
   # ETAPA 4: FINALIZAR E NOTIFICAR O STATUS FINAL (Depende das etapas anteriores)
   finalizar:
-    name: "4. Finalizar Processo"
+    name: "4. Finalizar"
     runs-on: ubuntu-latest
     # 'always()' garante que este job sempre rode, mesmo que um dos anteriores falhe ou seja pulado
     if: always() 
@@ -137,21 +137,21 @@ jobs:
 
             if (preparacao_status === 'failure') {
               final_comment = `
-              ❌ **Processo de Rollback Falhou!**
+              ❌ **Processo de Rollback falhou!**
 
               Ocorreu um erro inesperado durante a etapa de preparação. Por favor, verifique os [logs da Action](${github.server_url}/${{ github.repository }}/actions/runs/${{ github.run_id }}) para mais detalhes.
               `;
             } else if (notificacao_status === 'skipped') {
               final_comment = `
-              ⚠️ **Processo Concluído com Aviso.**
+              ⚠️ **Processo concluído com aviso.**
 
               A automação não encontrou um Pull Request para reverter na branch \`${{ inputs.target_branch }}\`. Nenhuma ação foi tomada.
               `;
             } else {
               final_comment = `
-              🏁 **Processo Finalizado.**
+              🏁 **Processo finalizado.**
 
-              A automação concluiu a análise. O link para a criação do PR de reversão foi postado acima.
+              A automação concluiu a análise. O link para a criação do PR de Rollback foi postado acima.
               `;
             }
 
