@@ -47,26 +47,32 @@ jobs:
               body: comment_body
             });
 
-  # ETAPA 2: PREPARAR A REVERSÃO (Depende da Etapa 1)
+  # ETAPA 2: PREPARAR A REVERSÃO
   preparar:
     name: "2. Preparar Rollback"
     runs-on: ubuntu-latest
-    needs: iniciar # Garante que esta etapa só rode após a 'iniciar'
+    needs: iniciar
     permissions:
       pull-requests: read
-    # Passamos os resultados deste job para os próximos
     outputs:
       pr_found: ${{ steps.find_pr.outputs.pr_found }}
       pr_number: ${{ steps.find_pr.outputs.pr_number }}
       pr_title: ${{ steps.find_pr.outputs.pr_title }}
       revert_url: ${{ steps.find_pr.outputs.revert_url }}
     steps:
+      - name: "Fazer checkout do código do repositório"
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
       - name: "Encontrar último PR mergeado"
         id: find_pr
         env:
           GH_TOKEN: ${{ secrets.GH_TOKEN }}
           TARGET_BRANCH: ${{ inputs.target_branch }}
         run: |
+          # Agora este comando rodará dentro de um repositório Git clonado
+          # e terá o contexto necessário para funcionar.
           PR_DATA=$(gh pr list --base "$TARGET_BRANCH" --state merged --limit 1 --json number,url,title)
           if [ -z "$PR_DATA" ] || [ "$PR_DATA" == "[]" ]; then
             echo "pr_found=false" >> $GITHUB_OUTPUT
@@ -77,12 +83,11 @@ jobs:
             echo "revert_url=$(echo "$PR_DATA" | jq -r '.[0].url')/revert" >> $GITHUB_OUTPUT
           fi
 
-  # ETAPA 3: NOTIFICAR SOBRE A REVERSÃO (Depende da Etapa 2)
+  # ETAPA 3: NOTIFICAR SOBRE A REVERSÃO
   notificar_reversao:
     name: "3. Notificar Rollback pronto"
     runs-on: ubuntu-latest
-    needs: preparar # Garante que esta etapa só rode após a 'preparar'
-    # Só executa se um PR foi encontrado na etapa anterior
+    needs: preparar
     if: needs.preparar.outputs.pr_found == 'true'
     permissions:
       issues: write
@@ -114,11 +119,10 @@ jobs:
               body: comment_body
             });
 
-  # ETAPA 4: FINALIZAR E NOTIFICAR O STATUS FINAL (Depende das etapas anteriores)
+  # ETAPA 4: FINALIZAR E NOTIFICAR O STATUS FINAL
   finalizar:
     name: "4. Finalizar"
     runs-on: ubuntu-latest
-    # 'always()' garante que este job sempre rode, mesmo que um dos anteriores falhe ou seja pulado
     if: always() 
     needs: [iniciar, preparar, notificar_reversao]
     permissions:
