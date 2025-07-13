@@ -28,7 +28,7 @@ jobs:
           script: |
             const issue_number = ${{ inputs.issue_number }};
             const run_url = `https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}`;
-            const comment_body = `⏳ **Processo de Rollback Automatizado Iniciado...**\n\nAcompanhe o progresso em tempo real: [Verificar Log da Action](${run_url} )`;
+            const comment_body = `⏳ **Processo de Rollback Automatizado Iniciado...**\n\nAcompanhe o progresso em tempo real: [Verificar Log da Action](${run_url}  )`;
             await github.rest.issues.createComment({ owner: context.repo.owner, repo: context.repo.repo, issue_number: issue_number, body: comment_body });
 
   # ETAPA 2: CRIAR O PULL REQUEST DE REVERSÃO
@@ -40,8 +40,8 @@ jobs:
       contents: write
       pull-requests: write
     outputs:
-      pr_number: ${{ steps.revert_pr.outputs.pr_number }}
-      pr_url: ${{ steps.revert_pr.outputs.pr_url }}
+      pr_number: ${{ steps.create_revert_pr.outputs.pr_number }}
+      pr_url: ${{ steps.create_revert_pr.outputs.pr_url }}
     steps:
       - name: "Fazer checkout do código"
         uses: actions/checkout@v4
@@ -49,11 +49,12 @@ jobs:
           fetch-depth: 0
           token: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: "Reverter último PR e criar branch"
-        id: revert_pr
+      - name: "Reverter, Criar Branch e Abrir PR"
+        id: create_revert_pr
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TARGET_BRANCH: ${{ inputs.target_branch }}
+          ISSUE_NUMBER: ${{ inputs.issue_number }}
         run: |
           git config user.name "GitHub Actions Bot"
           git config user.email "actions-bot@github.com"
@@ -61,7 +62,7 @@ jobs:
           LAST_PR_NUMBER=$(gh pr list --base "$TARGET_BRANCH" --state merged --limit 1 --json number --jq '.[0].number')
           MERGE_COMMIT_SHA=$(gh pr list --base "$TARGET_BRANCH" --state merged --limit 1 --json mergeCommit --jq '.[0].mergeCommit.oid')
 
-          if [ -z "$MERGE_COMMIT_SHA" ] || [ "$MERGE_COMMIT_SHA" == "null" ]; then
+          if [ -z "$MERGE_COMMIT_SHA" ]; then
             echo "::error::Nenhum commit de merge encontrado para o último PR."
             exit 1
           fi
@@ -71,37 +72,16 @@ jobs:
 
           REVERT_BRANCH_NAME="revert-pr-${LAST_PR_NUMBER}"
 
-          # AQUI ESTÁ A CORREÇÃO!
-          # 1. Deleta a branch remota se ela existir de uma execução anterior.
-          # O '|| true' garante que o script não falhe se a branch não existir.
+          # Limpeza de execuções anteriores
           git push origin --delete "$REVERT_BRANCH_NAME" || true
-
-          # 2. Cria a nova branch localmente
+          
+          # Lógica de Git
           git checkout -b "$REVERT_BRANCH_NAME"
-
-          # 3. Reverte o commit
           git revert --no-commit -m 1 "$MERGE_COMMIT_SHA"
-
-          # 4. Faz o commit da reversão
-          git commit -m "Revert: Reversão automática do PR #${LAST_PR_NUMBER}" -m "Este commit reverte as alterações do PR #${LAST_PR_NUMBER}."
-
-          # 5. Faz o push da nova branch limpa
+          git commit -m "Revert: Reversão automática do PR #${LAST_PR_NUMBER}"
           git push origin "$REVERT_BRANCH_NAME"
 
-          # 6. Passa os outputs
-          echo "revert_branch_name=${REVERT_BRANCH_NAME}" >> $GITHUB_OUTPUT
-          echo "last_pr_number=${LAST_PR_NUMBER}" >> $GITHUB_OUTPUT
-
-      - name: "Criar o Pull Request"
-        id: create_pr_step
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          TARGET_BRANCH: ${{ inputs.target_branch }}
-          ISSUE_NUMBER: ${{ inputs.issue_number }}
-          REVERT_BRANCH_NAME: ${{ steps.revert_pr.outputs.revert_branch_name }}
-          LAST_PR_NUMBER: ${{ steps.revert_pr.outputs.last_pr_number }}
-        run: |
-          # Criar o Pull Request a partir da branch que acabamos de subir
+          # Lógica de criação do PR
           PR_URL=$(gh pr create --title "[Rollback] Reversão automática do PR #${LAST_PR_NUMBER}" \
                                 --body "Este PR foi criado automaticamente para reverter as alterações do PR #${LAST_PR_NUMBER}. Acionado pela Issue #${ISSUE_NUMBER}." \
                                 --base "$TARGET_BRANCH" \
@@ -130,14 +110,11 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           PR_NUMBER: ${{ needs.criar_pr.outputs.pr_number }}
         run: |
-          # Verificação para depuração
           echo "Tentando fazer merge do PR número: $PR_NUMBER"
           if [ -z "$PR_NUMBER" ]; then
             echo "::error::Número do PR não recebido do job anterior."
             exit 1
           fi
-
-          # Comando de merge explícito usando o número do PR
           MERGE_COMMIT_SHA=$(gh pr merge "$PR_NUMBER" --squash --delete-branch --admin)
           echo "PR #${PR_NUMBER} mergeado com sucesso. Commit: ${MERGE_COMMIT_SHA}"
           echo "sha=${MERGE_COMMIT_SHA}" >> $GITHUB_OUTPUT
@@ -154,7 +131,7 @@ jobs:
       - name: "Verificar status e comentar na Issue"
         uses: actions/github-script@v7
         with:
-          github-token: ${{ secrets.GH_TOKEN }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
           script: |
             const issue_number = ${{ inputs.issue_number }};
             const pr_url = "${{ needs.criar_pr.outputs.pr_url }}";
@@ -165,7 +142,7 @@ jobs:
 
             let final_comment;
 
-            if (status_criar_pr === 'failure' || status_merge_pr === 'failure' ) {
+            if (status_criar_pr === 'failure' || status_merge_pr === 'failure'  ) {
               final_comment = `❌ **Processo de Rollback falhou!**\n\nOcorreu um erro durante a automação. Por favor, verifique os [logs da Action](${github.server_url}/${{ github.repository }}/actions/runs/${{ github.run_id }}) para mais detalhes.`;
             } else {
               final_comment = `✅ **Rollback concluído com sucesso!**\n\nAs alterações foram revertidas automaticamente.\n\n- **Pull Request de Reversão:** [${pr_url}](${pr_url})\n- **Commit de Merge da Reversão:** [${merge_commit_sha.substring(0,7)}](${merge_commit_url})`;
