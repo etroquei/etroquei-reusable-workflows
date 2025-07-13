@@ -104,6 +104,9 @@ jobs:
     outputs:
       merge_commit_sha: ${{ steps.merge.outputs.sha }}
     steps:
+      - name: "Fazer checkout do código"
+        uses: actions/checkout@v4
+
       - name: "Fazer merge do PR de reversão"
         id: merge
         env:
@@ -115,6 +118,7 @@ jobs:
             echo "::error::Número do PR não recebido do job anterior."
             exit 1
           fi
+          # Este comando agora será executado dentro de um repositório clonado.
           MERGE_COMMIT_SHA=$(gh pr merge "$PR_NUMBER" --squash --delete-branch --admin)
           echo "PR #${PR_NUMBER} mergeado com sucesso. Commit: ${MERGE_COMMIT_SHA}"
           echo "sha=${MERGE_COMMIT_SHA}" >> $GITHUB_OUTPUT
