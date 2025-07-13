@@ -106,20 +106,30 @@ jobs:
     steps:
       - name: "Fazer checkout do código"
         uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.target_branch }}
 
       - name: "Fazer merge do PR de reversão"
         id: merge
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           PR_NUMBER: ${{ needs.criar_pr.outputs.pr_number }}
+          TARGET_BRANCH: ${{ inputs.target_branch }}
         run: |
           echo "Tentando fazer merge do PR número: $PR_NUMBER"
           if [ -z "$PR_NUMBER" ]; then
             echo "::error::Número do PR não recebido do job anterior."
             exit 1
           fi
-          # Este comando agora será executado dentro de um repositório clonado.
-          MERGE_COMMIT_SHA=$(gh pr merge "$PR_NUMBER" --squash --delete-branch --admin)
+          
+          # Faz o merge
+          gh pr merge "$PR_NUMBER" --squash --delete-branch --admin
+          
+          # AQUI ESTÁ A CORREÇÃO!
+          # Após o merge, o commit mais recente na branch alvo é o commit de merge.
+          # Usamos 'git rev-parse' para obter o SHA de forma confiável.
+          MERGE_COMMIT_SHA=$(git rev-parse "origin/${TARGET_BRANCH}")
+
           echo "PR #${PR_NUMBER} mergeado com sucesso. Commit: ${MERGE_COMMIT_SHA}"
           echo "sha=${MERGE_COMMIT_SHA}" >> $GITHUB_OUTPUT
 
@@ -132,7 +142,7 @@ jobs:
     permissions:
       issues: write
     steps:
-      - name: "Verificar status e comentar na Issue"
+      - name: "Verificar status, comentar e fechar Issue"
         uses: actions/github-script@v7
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
@@ -145,11 +155,30 @@ jobs:
             const status_merge_pr = "${{ needs.merge_pr.result }}";
 
             let final_comment;
+            let should_close_issue = false;
 
             if (status_criar_pr === 'failure' || status_merge_pr === 'failure'  ) {
               final_comment = `❌ **Processo de Rollback falhou!**\n\nOcorreu um erro durante a automação. Por favor, verifique os [logs da Action](${github.server_url}/${{ github.repository }}/actions/runs/${{ github.run_id }}) para mais detalhes.`;
             } else {
               final_comment = `✅ **Rollback concluído com sucesso!**\n\nAs alterações foram revertidas automaticamente.\n\n- **Pull Request de Reversão:** [${pr_url}](${pr_url})\n- **Commit de Merge da Reversão:** [${merge_commit_sha.substring(0,7)}](${merge_commit_url})`;
+              should_close_issue = true;
             }
             
-            await github.rest.issues.createComment({ owner: context.repo.owner, repo: context.repo.repo, issue_number: issue_number, body: final_comment });
+            // Posta o comentário final
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: issue_number,
+              body: final_comment
+            });
+
+            // Se o processo foi um sucesso, fecha a issue.
+            if (should_close_issue) {
+              await github.rest.issues.update({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: issue_number,
+                state: 'closed'
+              });
+              console.log(`Issue #${issue_number} fechada com sucesso.`);
+            }
