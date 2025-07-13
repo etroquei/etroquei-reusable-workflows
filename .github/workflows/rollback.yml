@@ -12,10 +12,6 @@ on:
         required: false
         type: string
         default: 'main'
-    # secrets:
-    #   GITHUB_TOKEN:
-    #     description: 'GITHUB_TOKEN com permissões necessárias.'
-    #     required: true
 
 jobs:
   # ETAPA 1: INICIAR E NOTIFICAR
@@ -74,7 +70,7 @@ jobs:
           echo "Último PR encontrado: #${LAST_PR_NUMBER}"
 
           # Usar a CLI do GitHub para reverter o PR. Isso cria uma nova branch localmente.
-          gh pr revert "$LAST_PR_NUMBER" --yes --body "Reversão automática do PR #${LAST_PR_NUMBER} acionada pela Issue #${ISSUE_NUMBER}."
+          gh pr revert "$LAST_PR_NUMBER" --body "Rollback automática do PR #${LAST_PR_NUMBER} acionada pela Issue #${ISSUE_NUMBER}."
           
           # A CLI não cria o PR automaticamente, então fazemos isso agora.
           # A branch criada pelo 'gh pr revert' é 'revert-PR_NUMBER'
@@ -88,7 +84,7 @@ jobs:
           
           PR_NUMBER=$(echo "$PR_URL" | rev | cut -d'/' -f1 | rev)
 
-          echo "PR de reversão criado: ${PR_URL}"
+          echo "PR de Rollback criado: ${PR_URL}"
           echo "pr_number=${PR_NUMBER}" >> $GITHUB_OUTPUT
           echo "pr_url=${PR_URL}" >> $GITHUB_OUTPUT
 
