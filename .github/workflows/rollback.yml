@@ -20,7 +20,7 @@ on:
 jobs:
   # ETAPA 1: INICIAR E NOTIFICAR
   iniciar:
-    name: "1. Iniciar e notificar"
+    name: "1. Iniciar processo"
     runs-on: ubuntu-latest
     permissions:
       issues: write
@@ -32,100 +32,94 @@ jobs:
           script: |
             const issue_number = ${{ inputs.issue_number }};
             const run_url = `https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}`;
-            
-            const comment_body = `
-            ⏳ **Processo de Rollback iniciado...**
+            const comment_body = `⏳ **Processo de Rollback Automatizado Iniciado...**\n\nAcompanhe o progresso em tempo real: [Verificar Log da Action](${run_url} )`;
+            await github.rest.issues.createComment({ owner: context.repo.owner, repo: context.repo.repo, issue_number: issue_number, body: comment_body });
 
-            A automação foi acionada. Você pode acompanhar o progresso em tempo real no seguinte link:
-            👉 **[Verificar Log da Action](${run_url} )**
-            `;
-
-            await github.rest.issues.createComment({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              issue_number: issue_number,
-              body: comment_body
-            });
-
-  # ETAPA 2: PREPARAR A REVERSÃO
-  preparar:
-    name: "2. Preparar Rollback"
+  # ETAPA 2: CRIAR O PULL REQUEST DE REVERSÃO
+  criar_pr:
+    name: "2. Criar PR de Rollback"
     runs-on: ubuntu-latest
     needs: iniciar
     permissions:
-      contents: read
-      pull-requests: read
+      contents: write
+      pull-requests: write
     outputs:
-      pr_found: ${{ steps.find_pr.outputs.pr_found }}
-      pr_number: ${{ steps.find_pr.outputs.pr_number }}
-      pr_title: ${{ steps.find_pr.outputs.pr_title }}
-      revert_url: ${{ steps.find_pr.outputs.revert_url }}
+      pr_number: ${{ steps.revert_pr.outputs.pr_number }}
+      pr_url: ${{ steps.revert_pr.outputs.pr_url }}
     steps:
-      - name: "Fazer checkout do código do repositório"
+      - name: "Fazer checkout do código"
         uses: actions/checkout@v4
         with:
-          fetch-depth: 0
+          token: ${{ secrets.GH_TOKEN }}
 
-      - name: "Encontrar último PR mergeado"
-        id: find_pr
+      - name: "Encontrar e reverter o último PR"
+        id: revert_pr
         env:
           GH_TOKEN: ${{ secrets.GH_TOKEN }}
           TARGET_BRANCH: ${{ inputs.target_branch }}
+          ISSUE_NUMBER: ${{ inputs.issue_number }}
         run: |
-          # Agora este comando rodará dentro de um repositório Git clonado
-          # e terá o contexto necessário para funcionar.
-          PR_DATA=$(gh pr list --base "$TARGET_BRANCH" --state merged --limit 1 --json number,url,title)
-          if [ -z "$PR_DATA" ] || [ "$PR_DATA" == "[]" ]; then
-            echo "pr_found=false" >> $GITHUB_OUTPUT
-          else
-            echo "pr_found=true" >> $GITHUB_OUTPUT
-            echo "pr_number=$(echo "$PR_DATA" | jq -r '.[0].number')" >> $GITHUB_OUTPUT
-            echo "pr_title=$(echo "$PR_DATA" | jq -r '.[0].title')" >> $GITHUB_OUTPUT
-            echo "revert_url=$(echo "$PR_DATA" | jq -r '.[0].url')/revert" >> $GITHUB_OUTPUT
+          # Configurar o Git com o nome e email do bot da action
+          git config user.name "GitHub Actions Bot"
+          git config user.email "actions-bot@github.com"
+
+          # Encontrar o número do último PR mergeado
+          LAST_PR_NUMBER=$(gh pr list --base "$TARGET_BRANCH" --state merged --limit 1 --json number --jq '.[0].number')
+
+          if [ -z "$LAST_PR_NUMBER" ] || [ "$LAST_PR_NUMBER" == "null" ]; then
+            echo "::error::Nenhum PR encontrado para reverter."
+            exit 1
           fi
+          
+          echo "Último PR encontrado: #${LAST_PR_NUMBER}"
 
-  # ETAPA 3: NOTIFICAR SOBRE A REVERSÃO
-  notificar_reversao:
-    name: "3. Notificar Rollback pronto"
+          # Usar a CLI do GitHub para reverter o PR. Isso cria uma nova branch localmente.
+          gh pr revert "$LAST_PR_NUMBER" --yes --body "Reversão automática do PR #${LAST_PR_NUMBER} acionada pela Issue #${ISSUE_NUMBER}."
+          
+          # A CLI não cria o PR automaticamente, então fazemos isso agora.
+          # A branch criada pelo 'gh pr revert' é 'revert-PR_NUMBER'
+          REVERT_BRANCH_NAME="revert-${LAST_PR_NUMBER}"
+          
+          # Criar o Pull Request
+          PR_URL=$(gh pr create --title "[Rollback] Reversão automática do PR #${LAST_PR_NUMBER}" \
+                                --body "Este PR foi criado automaticamente para reverter as alterações do PR #${LAST_PR_NUMBER}. Acionado pela Issue #${ISSUE_NUMBER}." \
+                                --base "$TARGET_BRANCH" \
+                                --head "$REVERT_BRANCH_NAME")
+          
+          PR_NUMBER=$(echo "$PR_URL" | rev | cut -d'/' -f1 | rev)
+
+          echo "PR de reversão criado: ${PR_URL}"
+          echo "pr_number=${PR_NUMBER}" >> $GITHUB_OUTPUT
+          echo "pr_url=${PR_URL}" >> $GITHUB_OUTPUT
+
+  # ETAPA 3: FAZER O MERGE DO PULL REQUEST
+  merge_pr:
+    name: "3. Fazer Merge do PR"
     runs-on: ubuntu-latest
-    needs: preparar
-    if: needs.preparar.outputs.pr_found == 'true'
+    needs: criar_pr
     permissions:
-      issues: write
+      pull-requests: write
+      contents: write
+    outputs:
+      merge_commit_sha: ${{ steps.merge.outputs.sha }}
     steps:
-      - name: "Comentar na Issue com o link da Action"
-        uses: actions/github-script@v7
-        with:
-          github-token: ${{ secrets.GH_TOKEN }}
-          script: |
-            const issue_number = ${{ inputs.issue_number }};
-            const pr_number = "${{ needs.preparar.outputs.pr_number }}";
-            const pr_title = "${{ needs.preparar.outputs.pr_title }}";
-            const revert_url = "${{ needs.preparar.outputs.revert_url }}";
-            const target_branch = "${{ inputs.target_branch }}";
+      - name: "Fazer merge do PR de reversão"
+        id: merge
+        env:
+          GH_TOKEN: ${{ secrets.GH_TOKEN }}
+          PR_NUMBER: ${{ needs.criar_pr.outputs.pr_number }}
+        run: |
+          # Usar a CLI para fazer o merge e deletar a branch
+          MERGE_COMMIT_SHA=$(gh pr merge "$PR_NUMBER" --squash --delete-branch --admin)
+          echo "PR #${PR_NUMBER} mergeado com sucesso. Commit: ${MERGE_COMMIT_SHA}"
+          echo "sha=${MERGE_COMMIT_SHA}" >> $GITHUB_OUTPUT
 
-            const comment_body = `
-            ✅ **Rollback pronto para confirmação!**
-
-            O último Pull Request mergeado na branch \`${target_branch}\` foi o **[#${pr_number}: ${pr_title}](${revert_url})**.
-
-            Para finalizar, um membro da equipe deve clicar no link abaixo para criar o Pull Request de Rollback.
-
-            👉 ### **[Clique aqui para Criar o PR de Rollback](${revert_url})**
-            `;
-            await github.rest.issues.createComment({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              issue_number: issue_number,
-              body: comment_body
-            });
-
-  # ETAPA 4: FINALIZAR E NOTIFICAR O STATUS FINAL
+  # ETAPA 4: FINALIZAR E NOTIFICAR
   finalizar:
-    name: "4. Finalizar"
+    name: "4. Finalizar e Notificar"
     runs-on: ubuntu-latest
-    if: always() 
-    needs: [iniciar, preparar, notificar_reversao]
+    if: always()
+    needs: [iniciar, criar_pr, merge_pr]
     permissions:
       issues: write
     steps:
@@ -135,34 +129,18 @@ jobs:
           github-token: ${{ secrets.GH_TOKEN }}
           script: |
             const issue_number = ${{ inputs.issue_number }};
-            const preparacao_status = "${{ needs.preparar.result }}";
-            const notificacao_status = "${{ needs.notificar_reversao.result }}";
+            const pr_url = "${{ needs.criar_pr.outputs.pr_url }}";
+            const merge_commit_sha = "${{ needs.merge_pr.outputs.merge_commit_sha }}";
+            const merge_commit_url = `https://github.com/${{ github.repository }}/commit/${merge_commit_sha}`;
+            const status_criar_pr = "${{ needs.criar_pr.result }}";
+            const status_merge_pr = "${{ needs.merge_pr.result }}";
 
             let final_comment;
 
-            if (preparacao_status === 'failure') {
-              final_comment = `
-              ❌ **Processo de Rollback falhou!**
-
-              Ocorreu um erro inesperado durante a etapa de preparação. Por favor, verifique os [logs da Action](${github.server_url}/${{ github.repository }}/actions/runs/${{ github.run_id }}) para mais detalhes.
-              `;
-            } else if (notificacao_status === 'skipped') {
-              final_comment = `
-              ⚠️ **Processo concluído com aviso.**
-
-              A automação não encontrou um Pull Request para reverter na branch \`${{ inputs.target_branch }}\`. Nenhuma ação foi tomada.
-              `;
+            if (status_criar_pr === 'failure' || status_merge_pr === 'failure' ) {
+              final_comment = `❌ **Processo de Rollback falhou!**\n\nOcorreu um erro durante a automação. Por favor, verifique os [logs da Action](${github.server_url}/${{ github.repository }}/actions/runs/${{ github.run_id }}) para mais detalhes.`;
             } else {
-              final_comment = `
-              🏁 **Processo finalizado.**
-
-              A automação concluiu a análise. O link para a criação do PR de Rollback foi postado acima.
-              `;
+              final_comment = `✅ **Rollback concluído com sucesso!**\n\nAs alterações foram revertidas automaticamente.\n\n- **Pull Request de Reversão:** [${pr_url}](${pr_url})\n- **Commit de Merge da Reversão:** [${merge_commit_sha.substring(0,7)}](${merge_commit_url})`;
             }
-
-            await github.rest.issues.createComment({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              issue_number: issue_number,
-              body: final_comment
-            });
+            
+            await github.rest.issues.createComment({ owner: context.repo.owner, repo: context.repo.repo, issue_number: issue_number, body: final_comment });
