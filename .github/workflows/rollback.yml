@@ -1,4 +1,4 @@
-﻿name: "Lógica Central de Rollback"
+﻿name: "Rollback automatizado"
 
 on:
   workflow_call:
