@@ -48,35 +48,57 @@ jobs:
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: "Encontrar e reverter o último PR"
+      - name: "Reverter último PR e criar branch"
         id: revert_pr
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TARGET_BRANCH: ${{ inputs.target_branch }}
-          ISSUE_NUMBER: ${{ inputs.issue_number }}
         run: |
           # Configurar o Git com o nome e email do bot da action
           git config user.name "GitHub Actions Bot"
           git config user.email "actions-bot@github.com"
 
-          # Encontrar o número do último PR mergeado
+          # 1. Encontrar o SHA do commit de merge do último PR
+          MERGE_COMMIT_SHA=$(gh pr list --base "$TARGET_BRANCH" --state merged --limit 1 --json mergeCommit --jq '.[0].mergeCommit.oid')
           LAST_PR_NUMBER=$(gh pr list --base "$TARGET_BRANCH" --state merged --limit 1 --json number --jq '.[0].number')
 
-          if [ -z "$LAST_PR_NUMBER" ] || [ "$LAST_PR_NUMBER" == "null" ]; then
-            echo "::error::Nenhum PR encontrado para reverter."
+          if [ -z "$MERGE_COMMIT_SHA" ] || [ "$MERGE_COMMIT_SHA" == "null" ]; then
+            echo "::error::Nenhum commit de merge encontrado para o último PR."
             exit 1
           fi
           
           echo "Último PR encontrado: #${LAST_PR_NUMBER}"
+          echo "Commit de merge a ser revertido: ${MERGE_COMMIT_SHA}"
 
-          # Usar a CLI do GitHub para reverter o PR. Isso cria uma nova branch localmente.
-          gh pr revert "$LAST_PR_NUMBER" --body "Rollback automática do PR #${LAST_PR_NUMBER} acionada pela Issue #${ISSUE_NUMBER}."
-          
-          # A CLI não cria o PR automaticamente, então fazemos isso agora.
-          # A branch criada pelo 'gh pr revert' é 'revert-PR_NUMBER'
-          REVERT_BRANCH_NAME="revert-${LAST_PR_NUMBER}"
-          
-          # Criar o Pull Request
+          # 2. Criar uma nova branch para a reversão
+          REVERT_BRANCH_NAME="revert-pr-${LAST_PR_NUMBER}"
+          git checkout -b "$REVERT_BRANCH_NAME"
+
+          # 3. Usar git revert para criar o commit de reversão
+          # A opção -m 1 é crucial para reverter um commit de merge,
+          # pois indica que queremos manter o lado do "pai 1" (a branch principal).
+          git revert --no-commit -m 1 "$MERGE_COMMIT_SHA"
+
+          # 4. Fazer o commit da reversão
+          git commit -m "Revert: Reversão automática do PR #${LAST_PR_NUMBER}" -m "Este commit reverte as alterações do PR #${LAST_PR_NUMBER}."
+
+          # 5. Fazer push da nova branch para o repositório remoto
+          git push origin "$REVERT_BRANCH_NAME"
+
+          # 6. Passar o nome da branch para o próximo passo
+          echo "revert_branch_name=${REVERT_BRANCH_NAME}" >> $GITHUB_OUTPUT
+          echo "last_pr_number=${LAST_PR_NUMBER}" >> $GITHUB_OUTPUT
+
+      - name: "Criar o Pull Request"
+        id: create_pr_step
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TARGET_BRANCH: ${{ inputs.target_branch }}
+          ISSUE_NUMBER: ${{ inputs.issue_number }}
+          REVERT_BRANCH_NAME: ${{ steps.revert_pr.outputs.revert_branch_name }}
+          LAST_PR_NUMBER: ${{ steps.revert_pr.outputs.last_pr_number }}
+        run: |
+          # Criar o Pull Request a partir da branch que acabamos de subir
           PR_URL=$(gh pr create --title "[Rollback] Reversão automática do PR #${LAST_PR_NUMBER}" \
                                 --body "Este PR foi criado automaticamente para reverter as alterações do PR #${LAST_PR_NUMBER}. Acionado pela Issue #${ISSUE_NUMBER}." \
                                 --base "$TARGET_BRANCH" \
@@ -84,7 +106,7 @@ jobs:
           
           PR_NUMBER=$(echo "$PR_URL" | rev | cut -d'/' -f1 | rev)
 
-          echo "PR de Rollback criado: ${PR_URL}"
+          echo "PR de reversão criado: ${PR_URL}"
           echo "pr_number=${PR_NUMBER}" >> $GITHUB_OUTPUT
           echo "pr_url=${PR_URL}" >> $GITHUB_OUTPUT
 
